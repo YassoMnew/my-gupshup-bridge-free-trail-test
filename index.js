@@ -12,15 +12,17 @@ const RESPOND_IO_TOKEN = process.env.RESPOND_IO_TOKEN;
 const RESPOND_IO_CHANNEL_ID = process.env.RESPOND_IO_CHANNEL_ID;
 
 const GUPSHUP_API_KEY = process.env.GUPSHUP_API_KEY;
+// من Render: GUPSHUP_SOURCE أو GUPSHUP_SOURCE_PHONE
 const GUPSHUP_SOURCE_PHONE =
   process.env.GUPSHUP_SOURCE_PHONE || process.env.GUPSHUP_SOURCE;
 const GUPSHUP_SRC_NAME = process.env.GUPSHUP_SRC_NAME;
 
+// شوية تحذيرات لو حاجة ناقصة
 if (!RESPOND_IO_TOKEN || !RESPOND_IO_CHANNEL_ID) {
-  console.warn('⚠️ RESPOND.IO env vars missing (RESPOND_IO_TOKEN / RESPOND_IO_CHANNEL_ID)');
+  console.warn('⚠️ Missing RESPOND.IO env vars (RESPOND_IO_TOKEN / RESPOND_IO_CHANNEL_ID)');
 }
 if (!GUPSHUP_API_KEY || !GUPSHUP_SOURCE_PHONE || !GUPSHUP_SRC_NAME) {
-  console.warn('⚠️ GUPSHUP env vars missing (GUPSHUP_API_KEY / GUPSHUP_SOURCE_PHONE / GUPSHUP_SRC_NAME)');
+  console.warn('⚠️ Missing GUPSHUP env vars (GUPSHUP_API_KEY / GUPSHUP_SOURCE_PHONE / GUPSHUP_SRC_NAME)');
 }
 
 // ====== HEALTH CHECK ======
@@ -105,9 +107,8 @@ app.post('/webhook/gupshup', async (req, res) => {
   }
 });
 
-// ====== OUTGOING: Respond.io ➝ Gupshup ======
-// 👇 بدون أي middleware للـ Authorization
-app.post('/message', async (req, res) => {
+// ====== OUTGOING HANDLER: Respond.io ➝ Gupshup ======
+async function handleRespondOutgoing(req, res) {
   console.log('📤 Outgoing from Respond.io:', JSON.stringify(req.body));
 
   try {
@@ -118,6 +119,7 @@ app.post('/message', async (req, res) => {
       return res.status(200).send('Ignored');
     }
 
+    // contactId جاي من Respond.io بالشكل +2015xxxxxxx
     const destination = contactId.replace(/^\+/, '');
     const text = message.text;
 
@@ -128,6 +130,7 @@ app.post('/message', async (req, res) => {
     params.append('source', GUPSHUP_SOURCE_PHONE);
     params.append('destination', destination);
 
+    // message لازم تبقى JSON string حسب جابشَب
     const gupshupMessage = JSON.stringify({
       type: 'text',
       text: text,
@@ -159,7 +162,11 @@ app.post('/message', async (req, res) => {
     );
     res.status(500).send('Error in Respond.io outgoing');
   }
-});
+}
+
+// نفس الهاندلر على المسارين دول
+app.post('/message', handleRespondOutgoing);
+app.post('/webhook/respond', handleRespondOutgoing);
 
 // ====== START SERVER ======
 const PORT = process.env.PORT || 3000;
