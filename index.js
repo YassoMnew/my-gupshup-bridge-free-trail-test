@@ -3,78 +3,66 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 
 const app = express();
+
+// Middleware
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// ====== ENV VARS ======
-const RESPOND_IO_TOKEN = process.env.RESPOND_IO_TOKEN;
-const RESPOND_IO_CHANNEL_ID = process.env.RESPOND_IO_CHANNEL_ID;
+// ===== Environment variables =====
+const RESPOND_IO_TOKEN  = process.env.RESPOND_IO_TOKEN;   // API Token من Respond.io
+const GUPSHUP_API_KEY   = process.env.GUPSHUP_API_KEY;    // API key من Gupshup
+const GUPSHUP_SRC_NAME  = process.env.GUPSHUP_SRC_NAME;   // اسم الـ App في Gupshup (مثلاً: MissOdd)
+const GUPSHUP_SOURCE    = process.env.GUPSHUP_SOURCE;     // رقم الواتساب البيزنس بدون + (مثلاً 971507495883)
 
-const GUPSHUP_API_KEY = process.env.GUPSHUP_API_KEY;
-const GUPSHUP_SRC_NAME = process.env.GUPSHUP_SRC_NAME;       // app name in Gupshup (MissOdd)
-const GUPSHUP_SOURCE_PHONE = process.env.GUPSHUP_SOURCE_PHONE; // whatsapp number in Gupshup (e.g. 2015xxxxxxx)
-
-// ====== SIMPLE HEALTH CHECK ======
-app.get('/', (req, res) => {
-  res.status(200).send('Gupshup-Respond bridge is running');
-});
-
-// ====== GUPSHUP WEBHOOK VERIFICATION (GET) ======
+// =======================================================
+// 1) GET للتحقق من Gupshup (Webhook verification)
+// =======================================================
 app.get('/webhook/gupshup', (req, res) => {
   const challenge = req.query['hub.challenge'];
+
   if (challenge) {
-    console.log('--- Gupshup verification challenge received ---');
+    console.log('--- Gupshup Verification Challenge Received ---');
     return res.status(200).send(challenge);
   }
-  console.log('--- Gupshup GET verification (no challenge) ---');
+
+  console.log('--- Gupshup GET Verification Request Received (No Challenge) ---');
   res.status(200).send('Gupshup Webhook verification successful.');
 });
 
-// ====== INCOMING FROM GUPSHUP -> RESPOND.IO ======
+// =======================================================
+// 2) استقبال رسائل من Gupshup -> إرسالها لـ Respond.io
+// =======================================================
 app.post('/webhook/gupshup', async (req, res) => {
   console.log('--- Received POST from Gupshup ---', JSON.stringify(req.body));
 
   try {
-    const incoming = req.body;
+    const incomingMsg = req.body;
 
-    // بعض الـ system events مبيكونش فيها sender
-    if (!incoming.payload || !incoming.payload.sender || !incoming.payload.sender.phone) {
-      console.log('Ignoring non-message or system event from Gupshup');
+    // أمان زيادة عشان ما نوقعش السيرفر في رسائل سيستم
+    if (!incomingMsg.payload || !incomingMsg.payload.sender || !incomingMsg.payload.sender.phone) {
+      console.log('Ignored: missing sender phone (system event or unsupported payload).');
       return res.status(200).send('Ignored');
     }
 
-    const phoneRaw = incoming.payload.sender.phone;          // e.g. 2015xxxxxxx
-    const phoneE164 = phoneRaw.startsWith('+') ? phoneRaw : `+${phoneRaw}`;
+    const senderPhone = incomingMsg.payload.sender.phone;
+    let messageText = '';
 
-    const text =
-      incoming.payload.payload &&
-      incoming.payload.payload.text
-        ? incoming.payload.payload.text
-        : '';
+    // حسب الفورمات الحالي عندك
+    if (incomingMsg.payload.body && incomingMsg.payload.body.text) {
+      messageText = incomingMsg.payload.body.text;
+    } else if (incomingMsg.payload.text) {
+      // احتياطي لو الفورمات كان payload.text
+      messageText = incomingMsg.payload.text;
+    } else {
+      messageText = '[Non-text message received]';
+    }
 
-    const messageId = incoming.payload.id || String(Date.now());
-    const timestamp = incoming.timestamp || Date.now();
-
-    // Payload بالشكل اللي Respond.io طالبه في الـ docs
+    // Payload اللي بتبعته لـ Respond.io
     const respondPayload = {
-      channelId: RESPOND_IO_CHANNEL_ID,
-      contactId: phoneE164,
-      events: [
-        {
-          type: 'message',
-          mId: messageId,
-          timestamp: timestamp,
-          message: {
-            type: 'text',
-            text: text
-          }
-        }
-      ],
-      contact: {
-        firstName: incoming.payload.sender.name || '',
-        phone: phoneE164,
-        countryCode: incoming.payload.sender.country_code || '',
-        language: 'en'
+      senderId: senderPhone,
+      message: {
+        type: 'text',
+        text: messageText
       }
     };
 
@@ -89,7 +77,6 @@ app.post('/webhook/gupshup', async (req, res) => {
       }
     );
 
-    console.log('Forwarded message to Respond.io OK');
     res.status(200).send('Forwarded to Respond.io');
   } catch (error) {
     console.error(
@@ -100,40 +87,39 @@ app.post('/webhook/gupshup', async (req, res) => {
   }
 });
 
-// ====== AUTH FROM RESPOND.IO -> OUR SERVER ======
-function validateRespondToken(req, res, next) {
-  const bearer = req.headers.authorization || '';
-  if (!bearer.startsWith('Bearer ')) {
-    return res.status(401).send('Missing Authorization header');
-  }
-  const token = bearer.substring(7);
-  if (token !== RESPOND_IO_TOKEN) {
-    return res.status(401).send('Invalid token');
-  }
-  next();
-}
-
-// ====== OUTGOING FROM RESPOND.IO -> GUPSHUP ======
-app.post('/message', validateRespondToken, async (req, res) => {
-  console.log('--- Received Outgoing from Respond.io ---', JSON.stringify(req.body));
+// =======================================================
+// 3) استقبال رد من Respond.io -> إرساله لـ Gupshup
+// =======================================================
+app.post('/webhook/respond', async (req, res) => {
+  console.log('--- Received from Respond.io ---', JSON.stringify(req.body));
 
   try {
-    const { channelId, contactId, message } = req.body;
+    const replyData = req.body;
 
-    // contactId هنا هو نفس رقم التليفون اللي اخترناه ID Type = Phone Number
-    const destination = contactId; // يفضل يكون +2015xxx... حسب ما مسجله في Gupshup
+    // نحاول نجيب رقم العميل من أكثر من شكل احتياطيًا
+    const recipientPhone =
+      replyData.recipientId ||
+      replyData.to ||
+      (replyData.contact && replyData.contact.phone);
 
-    const text =
-      message && message.type === 'text' ? message.text : '';
+    const replyText =
+      replyData.message && replyData.message.text
+        ? replyData.message.text
+        : '';
+
+    if (!recipientPhone || !replyText) {
+      console.log('Missing recipientPhone or replyText, nothing to send to Gupshup.');
+      return res.status(200).send('Ignored');
+    }
 
     const gupshupUrl = 'https://api.gupshup.io/sm/api/v1/msg';
 
     const params = new URLSearchParams();
     params.append('channel', 'whatsapp');
-    params.append('source', GUPSHUP_SOURCE_PHONE); // رقم الواتساب في Gupshup
-    params.append('destination', destination.replace('+', '')); // Gupshup غالباً عايزه من غير +
-    params.append('message', text);
-    params.append('src.name', GUPSHUP_SRC_NAME);
+    params.append('source', GUPSHUP_SOURCE);      // هنا الرقم 971507495883
+    params.append('destination', recipientPhone); // رقم العميل اللي جاي من Respond.io
+    params.append('message', replyText);
+    params.append('src.name', GUPSHUP_SRC_NAME);  // MissOdd
 
     await axios.post(gupshupUrl, params, {
       headers: {
@@ -142,19 +128,19 @@ app.post('/message', validateRespondToken, async (req, res) => {
       }
     });
 
-    console.log('Forwarded message to Gupshup OK');
-    // Respond.io متوقع يرجع mId
-    res.status(200).json({ mId: String(Date.now()) });
+    res.status(200).send('Forwarded to Gupshup');
   } catch (error) {
     console.error(
       'Error forwarding to Gupshup:',
       error.response ? error.response.data : error.message
     );
-    res.status(500).send('Error in Respond.io Outgoing Webhook');
+    res.status(500).send('Error in Respond.io Webhook');
   }
 });
 
-// ====== START SERVER ======
+// =======================================================
+// 4) تشغيل السيرفر
+// =======================================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Bridge running on port ${PORT}`);
