@@ -6,84 +6,80 @@ const app = express();
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Environment Variables
+// Env Vars
 const RESPOND_IO_TOKEN = process.env.RESPOND_IO_TOKEN;
-const RESPOND_IO_CHANNEL_ID = process.env.RESPOND_IO_CHANNEL_ID;
 const GUPSHUP_API_KEY = process.env.GUPSHUP_API_KEY;
 const GUPSHUP_SRC_NAME = process.env.GUPSHUP_SRC_NAME;
+const RESPOND_IO_WORKSPACE = process.env.RESPOND_IO_WORKSPACE; // ← أضف هذا
 
-// ===============================
-// GUPSHUP VERIFICATION (GET)
-// ===============================
+// ============ GUPSHUP VERIFICATION (GET) ============
 app.get('/webhook/gupshup', (req, res) => {
     const challenge = req.query['hub.challenge'];
     if (challenge) return res.status(200).send(challenge);
-    res.status(200).send('OK');
+    res.status(200).send('Gupshup Webhook verification OK');
 });
 
-// ===============================
-// RECEIVE FROM GUPSHUP → SEND TO RESPOND.IO
-// ===============================
+// ============ RECEIVE FROM GUPSHUP → RESPOND.IO ============
 app.post('/webhook/gupshup', async (req, res) => {
-    console.log("--- Received POST from Gupshup ---", JSON.stringify(req.body));
+    console.log('--- Received POST from Gupshup ---', JSON.stringify(req.body));
 
     try {
-        const msg = req.body;
-        const sender = msg.payload.sender.phone;
+        const incoming = req.body;
+        const senderPhone = incoming.payload.sender.phone;
+        const messageText = incoming.payload.body?.text || "[Non-text message]";
 
-        const text = msg.payload.text || msg.payload.payload?.text || "[Unsupported message]";
+        // 👇 رابط Respond.io الصحيح
+        const RESPOND_URL = `https://api.respond.io/v1/workspaces/${RESPOND_IO_WORKSPACE}/messages`;
 
-        const url = `https://api.respond.io/v2/conversations/${RESPOND_IO_CHANNEL_ID}/messages`;
+        await axios.post(
+            RESPOND_URL,
+            {
+                contact: { phoneNumber: senderPhone },
+                message: { type: "text", text: messageText }
+            },
+            {
+                headers: {
+                    "Authorization": `Bearer ${RESPOND_IO_TOKEN}`,
+                    "Content-Type": "application/json"
+                }
+            }
+        );
 
-        await axios.post(url, {
-            to: sender,
-            message: { type: "text", text }
-        }, {
+        res.status(200).send("Forwarded to Respond.io");
+
+    } catch (err) {
+        console.error("Error forwarding to Respond.io:", err.response?.data || err.message);
+        res.status(500).send("Error in Gupshup webhook");
+    }
+});
+
+// ============ RECEIVE FROM RESPOND.IO → GUPSHUP ============
+app.post('/webhook/respond', async (req, res) => {
+    console.log('--- Received from Respond.io ---', JSON.stringify(req.body));
+
+    try {
+        const { recipient, message } = req.body;
+
+        const params = new URLSearchParams();
+        params.append("channel", "whatsapp");
+        params.append("source", GUPSHUP_SRC_NAME);
+        params.append("destination", recipient.phoneNumber);
+        params.append("message", message.text);
+        params.append("src.name", GUPSHUP_SRC_NAME);
+
+        await axios.post("https://api.gupshup.io/sm/api/v1/msg", params, {
             headers: {
-                "Authorization": `Bearer ${RESPOND_IO_TOKEN}`,
-                "Content-Type": "application/json"
+                apikey: GUPSHUP_API_KEY,
+                "Content-Type": "application/x-www-form-urlencoded"
             }
         });
 
-        res.status(200).send("Forwarded to Respond.io");
-    }
-    catch (err) {
-        console.error("Error forwarding to Respond.io:", err.response?.data || err.message);
-        res.status(500).send("Error forwarding to Respond.io");
-    }
-});
-
-// ===============================
-// RECEIVE FROM RESPOND.IO → SEND TO GUPSHUP
-// ===============================
-app.post('/webhook/respond', async (req, res) => {
-    console.log("--- Received from Respond.io ---", JSON.stringify(req.body));
-
-    try {
-        const reply = req.body;
-        const to = reply.to;
-        const text = reply.message.text;
-
-        const url = "https://api.gupshup.io/sm/api/v1/msg";
-
-        const form = new URLSearchParams();
-        form.append("channel", "whatsapp");
-        form.append("source", GUPSHUP_SRC_NAME);
-        form.append("destination", to);
-        form.append("message", text);
-
-        await axios.post(url, form, {
-            headers: { "apikey": GUPSHUP_API_KEY }
-        });
-
         res.status(200).send("Forwarded to Gupshup");
-    }
-    catch (err) {
+    } catch (err) {
         console.error("Error forwarding to Gupshup:", err.response?.data || err.message);
-        res.status(500).send("Error forwarding to Gupshup");
+        res.status(500).send("Error in Respond.io webhook");
     }
 });
 
-// PORT
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Bridge running on port ${PORT}`));
