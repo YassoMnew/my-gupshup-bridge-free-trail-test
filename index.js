@@ -91,3 +91,8 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Bridge running on port ${PORT}`);
 });
+// إضافة هذا الجزء لمعالجة طلب التحقق (GET request) من Gupshup
+app.get('/webhook/gupshup', (req, res) => {
+    // الرد برسالة 200 OK لتمرير عملية التحقق من Gupshup
+    res.status(200).send('Gupshup Webhook verification successful.');
+});
