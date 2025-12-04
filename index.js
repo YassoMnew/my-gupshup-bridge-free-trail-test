@@ -12,35 +12,41 @@ const RESPOND_IO_TOKEN = process.env.RESPOND_IO_TOKEN;
 const GUPSHUP_API_KEY = process.env.GUPSHUP_API_KEY;
 const GUPSHUP_SRC_NAME = process.env.GUPSHUP_SRC_NAME; // اسم التطبيق/الـ Source Name في Gupshup
 
-// 1. **المسار الأول (استقبال من Gupshup -> إرسال لـ Respond.io)**
+// =======================================================
+// 1. معالج طلب التحقق GET (للتأكد من Gupshup)
+// هذا يرد برسالة 200 OK للسماح بحفظ الـ Webhook
+app.get('/webhook/gupshup', (req, res) => {
+    console.log('--- Gupshup GET Verification Request Received ---');
+    res.status(200).send('Gupshup Webhook verification successful.');
+});
+// =======================================================
+
+
+// 2. المسار الأول (استقبال من Gupshup -> إرسال لـ Respond.io) - رسائل فعلية
 app.post('/webhook/gupshup', async (req, res) => {
-    console.log('--- Received from Gupshup ---', JSON.stringify(req.body));
+    console.log('--- Received POST from Gupshup ---', JSON.stringify(req.body));
     try {
-        // فحص هيكل بيانات Gupshup واستخراج البيانات الأساسية
         const incomingMsg = req.body; 
-        const senderPhone = incomingMsg.payload.sender.phone; // رقم العميل
+        const senderPhone = incomingMsg.payload.sender.phone;
         let messageText = '';
 
-        // التعامل مع النصوص (تأكد من هيكل Gupshup الخاص بك)
         if (incomingMsg.payload.body && incomingMsg.payload.body.text) {
              messageText = incomingMsg.payload.body.text;
         } else {
-             messageText = '[Non-text message received - e.g. Media or Location]'; // يجب تعديلها لدعم الميديا
+             messageText = '[Non-text message received - e.g. Media or Location]';
         }
 
-        // تجهيز البيانات لـ Respond.io
         const respondPayload = {
-            senderId: senderPhone, // المعرف (Phone Number)
+            senderId: senderPhone,
             message: {
                 type: "text",
                 text: messageText
             }
         };
 
-        // الإرسال إلى Respond.io Custom Channel
         await axios.post('https://custom-channel.respond.io/v1/message', respondPayload, {
             headers: {
-                'Authorization': `Bearer ${RESPOND_IO_TOKEN}`, // التوكن الذي حصلت عليه
+                'Authorization': `Bearer ${RESPOND_IO_TOKEN}`,
                 'Content-Type': 'application/json'
             }
         });
@@ -52,17 +58,14 @@ app.post('/webhook/gupshup', async (req, res) => {
     }
 });
 
-// 2. **المسار الثاني (استقبال من Respond.io -> إرسال لـ Gupshup)**
+// 3. المسار الثاني (استقبال من Respond.io -> إرسال لـ Gupshup)
 app.post('/webhook/respond', async (req, res) => {
     console.log('--- Received from Respond.io ---', JSON.stringify(req.body));
     try {
         const replyData = req.body;
-        
-        // Respond.io يرسل: recipientId (رقم الهاتف)
         const recipientPhone = replyData.recipientId;
         const replyText = replyData.message.text;
 
-        // الإرسال إلى Gupshup API (باستخدام form-urlencoded)
         const gupshupUrl = 'https://api.gupshup.io/sm/api/v1/msg';
         
         const params = new URLSearchParams();
@@ -70,7 +73,7 @@ app.post('/webhook/respond', async (req, res) => {
         params.append('source', GUPSHUP_SRC_NAME);
         params.append('destination', recipientPhone);
         params.append('message', replyText);
-        params.append('src.name', GUPSHUP_SRC_NAME); // تكرار الاسم حسب متطلبات Gupshup
+        params.append('src.name', GUPSHUP_SRC_NAME);
 
         await axios.post(gupshupUrl, params, {
             headers: {
@@ -90,9 +93,4 @@ app.post('/webhook/respond', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Bridge running on port ${PORT}`);
-});
-// إضافة هذا الجزء لمعالجة طلب التحقق (GET request) من Gupshup
-app.get('/webhook/gupshup', (req, res) => {
-    // الرد برسالة 200 OK لتمرير عملية التحقق من Gupshup
-    res.status(200).send('Gupshup Webhook verification successful.');
 });
