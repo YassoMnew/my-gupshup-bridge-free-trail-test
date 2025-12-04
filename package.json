@@ -1,0 +1,16 @@
+{
+  "name": "gupshup-respond-bridge",
+  "version": "1.0.0",
+  "description": "Middleware to connect Gupshup and Respond.io",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "body-parser": "^1.20.2",
+    "axios": "^1.6.2"
+  },
+  "author": "",
+  "license": "ISC"
+}
