@@ -12,12 +12,10 @@ const RESPOND_IO_TOKEN = process.env.RESPOND_IO_TOKEN;
 const RESPOND_IO_CHANNEL_ID = process.env.RESPOND_IO_CHANNEL_ID;
 
 const GUPSHUP_API_KEY = process.env.GUPSHUP_API_KEY;
-// هنقرأ أي واحد فيهم عشان لو متسماش نفس الاسم بالظبط في Render
 const GUPSHUP_SOURCE_PHONE =
   process.env.GUPSHUP_SOURCE_PHONE || process.env.GUPSHUP_SOURCE;
 const GUPSHUP_SRC_NAME = process.env.GUPSHUP_SRC_NAME;
 
-// شوية تحذيرات لو في env ناقص
 if (!RESPOND_IO_TOKEN || !RESPOND_IO_CHANNEL_ID) {
   console.warn('⚠️ RESPOND.IO env vars missing (RESPOND_IO_TOKEN / RESPOND_IO_CHANNEL_ID)');
 }
@@ -107,21 +105,9 @@ app.post('/webhook/gupshup', async (req, res) => {
   }
 });
 
-// ====== RESPOND.IO AUTH VALIDATION ======
-function validateRespondToken(req, res, next) {
-  const bearer = req.headers.authorization || '';
-  if (!bearer.startsWith('Bearer ')) {
-    return res.status(401).send('Missing Authorization header');
-  }
-  const token = bearer.substring(7);
-  if (token !== RESPOND_IO_TOKEN) {
-    return res.status(401).send('Invalid token');
-  }
-  next();
-}
-
 // ====== OUTGOING: Respond.io ➝ Gupshup ======
-app.post('/message', validateRespondToken, async (req, res) => {
+// 👇 بدون أي middleware للـ Authorization
+app.post('/message', async (req, res) => {
   console.log('📤 Outgoing from Respond.io:', JSON.stringify(req.body));
 
   try {
@@ -132,11 +118,9 @@ app.post('/message', validateRespondToken, async (req, res) => {
       return res.status(200).send('Ignored');
     }
 
-    // contactId جاي من Respond.io بالشكل +9715xxxxxxx
     const destination = contactId.replace(/^\+/, '');
     const text = message.text;
 
-    // طبقًا لدكات جابشَب: https://api.gupshup.io/wa/api/v1/msg
     const gupshupUrl = 'https://api.gupshup.io/wa/api/v1/msg';
 
     const params = new URLSearchParams();
@@ -144,7 +128,6 @@ app.post('/message', validateRespondToken, async (req, res) => {
     params.append('source', GUPSHUP_SOURCE_PHONE);
     params.append('destination', destination);
 
-    // message لازم تبقى JSON string
     const gupshupMessage = JSON.stringify({
       type: 'text',
       text: text,
