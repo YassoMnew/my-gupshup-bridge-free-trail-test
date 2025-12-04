@@ -1,6 +1,7 @@
 const express = require('express');
 const bodyParser = require('body-parser');
 const axios = require('axios');
+const { URLSearchParams } = require('url');
 
 const app = express();
 app.use(bodyParser.json());
@@ -11,8 +12,18 @@ const RESPOND_IO_TOKEN = process.env.RESPOND_IO_TOKEN;
 const RESPOND_IO_CHANNEL_ID = process.env.RESPOND_IO_CHANNEL_ID;
 
 const GUPSHUP_API_KEY = process.env.GUPSHUP_API_KEY;
-const GUPSHUP_SRC_NAME = process.env.GUPSHUP_SRC_NAME;       // Example: MissOdd
-const GUPSHUP_SOURCE_PHONE = process.env.GUPSHUP_SOURCE_PHONE; // Example: 971507495883
+// هنقرأ أي واحد فيهم عشان لو متسماش نفس الاسم بالظبط في Render
+const GUPSHUP_SOURCE_PHONE =
+  process.env.GUPSHUP_SOURCE_PHONE || process.env.GUPSHUP_SOURCE;
+const GUPSHUP_SRC_NAME = process.env.GUPSHUP_SRC_NAME;
+
+// شوية تحذيرات لو في env ناقص
+if (!RESPOND_IO_TOKEN || !RESPOND_IO_CHANNEL_ID) {
+  console.warn('⚠️ RESPOND.IO env vars missing (RESPOND_IO_TOKEN / RESPOND_IO_CHANNEL_ID)');
+}
+if (!GUPSHUP_API_KEY || !GUPSHUP_SOURCE_PHONE || !GUPSHUP_SRC_NAME) {
+  console.warn('⚠️ GUPSHUP env vars missing (GUPSHUP_API_KEY / GUPSHUP_SOURCE_PHONE / GUPSHUP_SRC_NAME)');
+}
 
 // ====== HEALTH CHECK ======
 app.get('/', (req, res) => {
@@ -45,7 +56,9 @@ app.post('/webhook/gupshup', async (req, res) => {
     const phoneE164 = phoneRaw.startsWith('+') ? phoneRaw : `+${phoneRaw}`;
 
     const text =
-      incoming.payload.payload?.text || incoming.payload.text || '[Non-text message]';
+      incoming.payload.payload?.text ||
+      incoming.payload.text ||
+      '[Non-text message]';
 
     const messageId = incoming.payload.id || String(Date.now());
     const timestamp = incoming.timestamp || Date.now();
@@ -72,17 +85,24 @@ app.post('/webhook/gupshup', async (req, res) => {
       },
     };
 
-    await axios.post('https://app.respond.io/custom/channel/webhook/', respondPayload, {
-      headers: {
-        Authorization: `Bearer ${RESPOND_IO_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-    });
+    await axios.post(
+      'https://app.respond.io/custom/channel/webhook/',
+      respondPayload,
+      {
+        headers: {
+          Authorization: `Bearer ${RESPOND_IO_TOKEN}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    );
 
     console.log('✅ Forwarded to Respond.io');
     res.status(200).send('Forwarded to Respond.io');
   } catch (error) {
-    console.error('❌ Error sending to Respond.io:', error.response?.data || error.message);
+    console.error(
+      '❌ Error sending to Respond.io:',
+      error.response?.data || error.message
+    );
     res.status(500).send('Error in Gupshup webhook');
   }
 });
@@ -112,16 +132,26 @@ app.post('/message', validateRespondToken, async (req, res) => {
       return res.status(200).send('Ignored');
     }
 
-    const destination = contactId.replace('+', '');
+    // contactId جاي من Respond.io بالشكل +9715xxxxxxx
+    const destination = contactId.replace(/^\+/, '');
     const text = message.text;
 
-    const gupshupUrl = 'https://api.gupshup.io/sm/api/v1/msg';
+    // طبقًا لدكات جابشَب: https://api.gupshup.io/wa/api/v1/msg
+    const gupshupUrl = 'https://api.gupshup.io/wa/api/v1/msg';
 
     const params = new URLSearchParams();
     params.append('channel', 'whatsapp');
     params.append('source', GUPSHUP_SOURCE_PHONE);
     params.append('destination', destination);
-    params.append('message', text);
+
+    // message لازم تبقى JSON string
+    const gupshupMessage = JSON.stringify({
+      type: 'text',
+      text: text,
+      previewUrl: false,
+    });
+    params.append('message', gupshupMessage);
+
     params.append('src.name', GUPSHUP_SRC_NAME);
 
     console.log('➡️ Sending to Gupshup:', {
@@ -136,10 +166,14 @@ app.post('/message', validateRespondToken, async (req, res) => {
       },
     });
 
-    console.log('✅ Message sent to Gupshup:', response.data);
+    console.log('✅ Message sent to Gupshup:', response.status, response.data);
     res.status(200).json({ mId: String(Date.now()) });
   } catch (error) {
-    console.error('❌ Error sending to Gupshup:', error.response?.data || error.message);
+    console.error(
+      '❌ Error sending to Gupshup:',
+      error.response?.status,
+      error.response?.data || error.message
+    );
     res.status(500).send('Error in Respond.io outgoing');
   }
 });
