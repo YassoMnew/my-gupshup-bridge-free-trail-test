@@ -15,8 +15,17 @@ const GUPSHUP_SRC_NAME = process.env.GUPSHUP_SRC_NAME; // اسم التطبيق/
 // =======================================================
 // 1. معالج طلب التحقق GET (للتأكد من Gupshup)
 // هذا يرد برسالة 200 OK للسماح بحفظ الـ Webhook
+// هذا الكود يحل مشكلة Invalid URL
 app.get('/webhook/gupshup', (req, res) => {
-    console.log('--- Gupshup GET Verification Request Received ---');
+    const challenge = req.query['hub.challenge'];
+    
+    if (challenge) {
+        console.log('--- Gupshup Verification Challenge Received ---');
+        // هنا يتم إرجاع الرمز السري الذي أرسلته Gupshup
+        return res.status(200).send(challenge);
+    }
+    
+    console.log('--- Gupshup GET Verification Request Received (No Challenge) ---');
     res.status(200).send('Gupshup Webhook verification successful.');
 });
 // =======================================================
