@@ -3,63 +3,42 @@ const bodyParser = require('body-parser');
 const axios = require('axios');
 const app = express();
 
-// Middleware
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // Environment Variables
 const RESPOND_IO_TOKEN = process.env.RESPOND_IO_TOKEN;
+const RESPOND_IO_CHANNEL_ID = process.env.RESPOND_IO_CHANNEL_ID;
 const GUPSHUP_API_KEY = process.env.GUPSHUP_API_KEY;
 const GUPSHUP_SRC_NAME = process.env.GUPSHUP_SRC_NAME;
 
-// =======================================================
-// 1) Gupshup GET Verification (Fix Invalid URL)
-// =======================================================
+// ===============================
+// GUPSHUP VERIFICATION (GET)
+// ===============================
 app.get('/webhook/gupshup', (req, res) => {
     const challenge = req.query['hub.challenge'];
-
-    if (challenge) {
-        console.log('--- Gupshup Verification Challenge Received ---');
-        return res.status(200).send(challenge);
-    }
-
-    console.log('--- Gupshup GET Verification Request Received ---');
-    res.status(200).send('Gupshup Webhook verification successful.');
+    if (challenge) return res.status(200).send(challenge);
+    res.status(200).send('OK');
 });
 
-// =======================================================
-// 2) Receive messages FROM Gupshup → send TO Respond.io
-// =======================================================
+// ===============================
+// RECEIVE FROM GUPSHUP → SEND TO RESPOND.IO
+// ===============================
 app.post('/webhook/gupshup', async (req, res) => {
-    console.log('--- Received POST from Gupshup ---', JSON.stringify(req.body));
+    console.log("--- Received POST from Gupshup ---", JSON.stringify(req.body));
 
     try {
-        const data = req.body;
+        const msg = req.body;
+        const sender = msg.payload.sender.phone;
 
-        // حماية من رسائل ناقصة
-        if (!data.payload || !data.payload.sender || !data.payload.sender.phone) {
-            console.log("Ignored system event or invalid payload from Gupshup.");
-            return res.status(200).send("Ignored");
-        }
+        const text = msg.payload.text || msg.payload.payload?.text || "[Unsupported message]";
 
-        const senderPhone = data.payload.sender.phone;
-        const messageText =
-            data.payload.body && data.payload.body.text
-                ? data.payload.body.text
-                : "[Unsupported message type]";
+        const url = `https://api.respond.io/v2/conversations/${RESPOND_IO_CHANNEL_ID}/messages`;
 
-        const respondPayload = {
-            senderId: senderPhone,
-            message: {
-                type: "text",
-                text: messageText
-            }
-        };
-
-        // ----------------------------------------------
-        // 🚀 URL الصحيح لــ Respond.io
-        // ----------------------------------------------
-        await axios.post("https://api.respond.io/v1/message", respondPayload, {
+        await axios.post(url, {
+            to: sender,
+            message: { type: "text", text }
+        }, {
             headers: {
                 "Authorization": `Bearer ${RESPOND_IO_TOKEN}`,
                 "Content-Type": "application/json"
@@ -67,51 +46,44 @@ app.post('/webhook/gupshup', async (req, res) => {
         });
 
         res.status(200).send("Forwarded to Respond.io");
-
-    } catch (error) {
-        console.error("Error forwarding to Respond.io:", error.response?.data || error.message);
-        res.status(500).send("Error sending to Respond.io");
+    }
+    catch (err) {
+        console.error("Error forwarding to Respond.io:", err.response?.data || err.message);
+        res.status(500).send("Error forwarding to Respond.io");
     }
 });
 
-// =======================================================
-// 3) Receive replies FROM Respond.io → send TO Gupshup
-// =======================================================
+// ===============================
+// RECEIVE FROM RESPOND.IO → SEND TO GUPSHUP
+// ===============================
 app.post('/webhook/respond', async (req, res) => {
-    console.log('--- Received POST from Respond.io ---', JSON.stringify(req.body));
+    console.log("--- Received from Respond.io ---", JSON.stringify(req.body));
 
     try {
         const reply = req.body;
+        const to = reply.to;
+        const text = reply.message.text;
 
-        const recipientPhone = reply.recipientId;
-        const replyText = reply.message?.text || "";
+        const url = "https://api.gupshup.io/sm/api/v1/msg";
 
-        const params = new URLSearchParams();
-        params.append("channel", "whatsapp");
-        params.append("source", GUPSHUP_SRC_NAME);
-        params.append("destination", recipientPhone);
-        params.append("message", replyText);
-        params.append("src.name", GUPSHUP_SRC_NAME);
+        const form = new URLSearchParams();
+        form.append("channel", "whatsapp");
+        form.append("source", GUPSHUP_SRC_NAME);
+        form.append("destination", to);
+        form.append("message", text);
 
-        await axios.post("https://api.gupshup.io/sm/api/v1/msg", params, {
-            headers: {
-                "apikey": GUPSHUP_API_KEY,
-                "Content-Type": "application/x-www-form-urlencoded"
-            }
+        await axios.post(url, form, {
+            headers: { "apikey": GUPSHUP_API_KEY }
         });
 
         res.status(200).send("Forwarded to Gupshup");
-
-    } catch (error) {
-        console.error("Error forwarding to Gupshup:", error.response?.data || error.message);
-        res.status(500).send("Error sending to Gupshup");
+    }
+    catch (err) {
+        console.error("Error forwarding to Gupshup:", err.response?.data || err.message);
+        res.status(500).send("Error forwarding to Gupshup");
     }
 });
 
-// =======================================================
-// Start Server
-// =======================================================
+// PORT
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Bridge running on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
