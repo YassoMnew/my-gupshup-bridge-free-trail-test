@@ -50,7 +50,7 @@ app.get('/webhook/gupshup', (req, res) => {
 });
 
 // ====== INCOMING: Gupshup ➝ Respond.io ======
-// ملاحظة: Respond.io Custom Channel عندك مش بيقبل image كـ message.type بشكل مباشر
+// Respond.io Custom Channel عندك مش بيقبل image/audio/video كـ type بشكل يَعرضها
 // فبنحوّل الميديا لنص + رابط (مضمون يظهر)
 app.post('/webhook/gupshup', async (req, res) => {
   console.log('📩 Incoming from Gupshup:', JSON.stringify(req.body));
@@ -86,27 +86,15 @@ app.post('/webhook/gupshup', async (req, res) => {
       };
     } else if (msgType === 'video') {
       const url = msgPayload.url || '';
-      respondMessage = {
-        type: 'text',
-        text: `🎥 Video received\n${url || '[no url]'}`,
-      };
+      respondMessage = { type: 'text', text: `🎥 Video received\n${url || '[no url]'}` };
     } else if (msgType === 'audio') {
       const url = msgPayload.url || '';
-      respondMessage = {
-        type: 'text',
-        text: `🎤 Audio received\n${url || '[no url]'}`,
-      };
+      respondMessage = { type: 'text', text: `🎤 Audio received\n${url || '[no url]'}` };
     } else if (msgType === 'file' || msgType === 'document') {
       const url = msgPayload.url || '';
-      respondMessage = {
-        type: 'text',
-        text: `📎 File received\n${url || '[no url]'}`,
-      };
+      respondMessage = { type: 'text', text: `📎 File received\n${url || '[no url]'}` };
     } else {
-      respondMessage = {
-        type: 'text',
-        text: `[Non-text message: ${msgType}]`,
-      };
+      respondMessage = { type: 'text', text: `[Non-text message: ${msgType}]` };
     }
 
     const respondPayload = {
@@ -160,25 +148,54 @@ async function handleRespondOutgoing(req, res) {
       return res.status(200).send('Ignored');
     }
 
+    // ✅ استخراج رابط الميديا من كل الأماكن الشائعة في Respond.io
+    const mediaUrl =
+      message.url ||
+      message.mediaUrl ||
+      message.fileUrl ||
+      message.attachment?.url ||
+      message.attachment?.fileUrl ||
+      message.attachment?.payload?.url ||
+      message.attachments?.[0]?.url ||
+      message.attachments?.[0]?.fileUrl ||
+      message.attachments?.[0]?.payload?.url ||
+      null;
+
+    const caption =
+      message.caption ||
+      message.attachment?.caption ||
+      message.attachments?.[0]?.caption ||
+      '';
+
+    const filename =
+      message.filename ||
+      message.attachment?.filename ||
+      message.attachments?.[0]?.filename ||
+      'file';
+
     let gupshupMsg = null;
 
     if (message.type === 'text' && message.text) {
       gupshupMsg = { type: 'text', text: message.text, previewUrl: false };
-    } else if (message.type === 'image' && message.url) {
+    } else if (message.type === 'image' && mediaUrl) {
       gupshupMsg = {
         type: 'image',
-        originalUrl: message.url,
-        previewUrl: message.url,
-        caption: message.caption || '',
+        originalUrl: mediaUrl,
+        previewUrl: mediaUrl,
+        caption: caption || '',
       };
-    } else if (message.type === 'audio' && message.url) {
-      gupshupMsg = { type: 'audio', url: message.url };
-    } else if (message.type === 'video' && message.url) {
-      gupshupMsg = { type: 'video', url: message.url, caption: message.caption || '' };
-    } else if (message.type === 'file' && message.url) {
-      gupshupMsg = { type: 'file', url: message.url, filename: message.filename || 'file' };
+    } else if (message.type === 'audio' && mediaUrl) {
+      gupshupMsg = { type: 'audio', url: mediaUrl };
+    } else if (message.type === 'video' && mediaUrl) {
+      gupshupMsg = { type: 'video', url: mediaUrl, caption: caption || '' };
+    } else if ((message.type === 'file' || message.type === 'document') && mediaUrl) {
+      gupshupMsg = { type: 'file', url: mediaUrl, filename };
     } else {
-      console.log('⚠️ Unsupported message type or missing url:', message.type, message);
+      console.log('⚠️ Unsupported or missing mediaUrl:', {
+        type: message.type,
+        mediaUrl,
+        messageKeys: Object.keys(message),
+      });
       return res.status(200).send('Ignored');
     }
 
@@ -210,11 +227,11 @@ async function handleRespondOutgoing(req, res) {
     console.log('✅ Message sent to Gupshup:', response.status, response.data);
     res.status(200).json({ mId: String(Date.now()) });
   } catch (error) {
-    console.error(
-      '❌ Error sending to Gupshup:',
-      error.response?.status,
-      error.response?.data || error.message
-    );
+    console.error('❌ Error sending to Gupshup:', {
+      status: error.response?.status,
+      data: error.response?.data,
+      message: error.message,
+    });
     // نرجع 200 عشان Respond.io ما يعملش retries مزعجة
     res.status(200).json({ mId: String(Date.now()), status: 'accepted_with_error' });
   }
