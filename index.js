@@ -35,10 +35,6 @@ app.get('/', (req, res) => {
   res.status(200).send('Bridge is running');
 });
 
-// (اختياري) endpoints للتجربة
-app.get('/message', (req, res) => res.status(200).send('OK'));
-app.get('/webhook/respond', (req, res) => res.status(200).send('OK'));
-
 // ====== GUPSHUP VERIFICATION ======
 app.get('/webhook/gupshup', (req, res) => {
   const challenge = req.query['hub.challenge'];
@@ -50,8 +46,7 @@ app.get('/webhook/gupshup', (req, res) => {
 });
 
 // ====== INCOMING: Gupshup ➝ Respond.io ======
-// Respond.io Custom Channel عندك مش بيقبل image/audio/video كـ type بشكل يَعرضها
-// فبنحوّل الميديا لنص + رابط (مضمون يظهر)
+// (عشان Respond.io عندك ما يعرضش الميديا كـ image event بشكل مضمون، بنبعته كنص + رابط)
 app.post('/webhook/gupshup', async (req, res) => {
   console.log('📩 Incoming from Gupshup:', JSON.stringify(req.body));
 
@@ -79,11 +74,7 @@ app.post('/webhook/gupshup', async (req, res) => {
       respondMessage = { type: 'text', text: text || '[Empty text]' };
     } else if (msgType === 'image') {
       const url = msgPayload.url || '';
-      const caption = msgPayload.caption || '';
-      respondMessage = {
-        type: 'text',
-        text: `📷 Image received\n${caption ? caption + '\n' : ''}${url || '[no url]'}`,
-      };
+      respondMessage = { type: 'text', text: `📷 Image received\n${url || '[no url]'}` };
     } else if (msgType === 'video') {
       const url = msgPayload.url || '';
       respondMessage = { type: 'text', text: `🎥 Video received\n${url || '[no url]'}` };
@@ -136,7 +127,7 @@ app.post('/webhook/gupshup', async (req, res) => {
   }
 });
 
-// ====== OUTGOING: Respond.io ➝ Gupshup (Text + Media) ======
+// ====== OUTGOING: Respond.io ➝ Gupshup (Text + Media + Attachment) ======
 async function handleRespondOutgoing(req, res) {
   console.log('📤 Outgoing from Respond.io:', JSON.stringify(req.body));
 
@@ -148,14 +139,20 @@ async function handleRespondOutgoing(req, res) {
       return res.status(200).send('Ignored');
     }
 
-    // ✅ استخراج رابط الميديا من كل الأماكن الشائعة في Respond.io
+    // ✅ لو Respond.io باعت attachment، النوع الحقيقي جوه attachment.type
+    const isAttachment = message.type === 'attachment' && message.attachment;
+    const effectiveType = isAttachment ? (message.attachment.type || 'file') : message.type;
+
     const mediaUrl =
+      // direct common
       message.url ||
       message.mediaUrl ||
       message.fileUrl ||
+      // attachment common
       message.attachment?.url ||
       message.attachment?.fileUrl ||
       message.attachment?.payload?.url ||
+      // attachments array common
       message.attachments?.[0]?.url ||
       message.attachments?.[0]?.fileUrl ||
       message.attachments?.[0]?.payload?.url ||
@@ -163,36 +160,40 @@ async function handleRespondOutgoing(req, res) {
 
     const caption =
       message.caption ||
+      message.attachment?.description ||
       message.attachment?.caption ||
       message.attachments?.[0]?.caption ||
       '';
 
     const filename =
       message.filename ||
+      message.attachment?.fileName ||
       message.attachment?.filename ||
       message.attachments?.[0]?.filename ||
+      message.attachments?.[0]?.fileName ||
       'file';
 
     let gupshupMsg = null;
 
-    if (message.type === 'text' && message.text) {
+    if (effectiveType === 'text' && message.text) {
       gupshupMsg = { type: 'text', text: message.text, previewUrl: false };
-    } else if (message.type === 'image' && mediaUrl) {
+    } else if (effectiveType === 'image' && mediaUrl) {
       gupshupMsg = {
         type: 'image',
         originalUrl: mediaUrl,
         previewUrl: mediaUrl,
         caption: caption || '',
       };
-    } else if (message.type === 'audio' && mediaUrl) {
+    } else if (effectiveType === 'audio' && mediaUrl) {
       gupshupMsg = { type: 'audio', url: mediaUrl };
-    } else if (message.type === 'video' && mediaUrl) {
+    } else if (effectiveType === 'video' && mediaUrl) {
       gupshupMsg = { type: 'video', url: mediaUrl, caption: caption || '' };
-    } else if ((message.type === 'file' || message.type === 'document') && mediaUrl) {
+    } else if ((effectiveType === 'file' || effectiveType === 'document') && mediaUrl) {
       gupshupMsg = { type: 'file', url: mediaUrl, filename };
     } else {
       console.log('⚠️ Unsupported or missing mediaUrl:', {
-        type: message.type,
+        messageType: message.type,
+        effectiveType,
         mediaUrl,
         messageKeys: Object.keys(message),
       });
@@ -232,7 +233,7 @@ async function handleRespondOutgoing(req, res) {
       data: error.response?.data,
       message: error.message,
     });
-    // نرجع 200 عشان Respond.io ما يعملش retries مزعجة
+    // 200 عشان Respond.io ما يعملش retries كتير
     res.status(200).json({ mId: String(Date.now()), status: 'accepted_with_error' });
   }
 }
