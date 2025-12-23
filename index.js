@@ -22,7 +22,6 @@ const GUPSHUP_SOURCE_PHONE =
   process.env.GUPSHUP_SOURCE_PHONE || process.env.GUPSHUP_SOURCE;
 const GUPSHUP_SRC_NAME = process.env.GUPSHUP_SRC_NAME;
 
-// (اختياري) اطبع وجود المتغيرات بدون تسريب قيم حساسة
 console.log('🔧 Loaded env flags:', {
   RESPOND_IO_TOKEN: !!RESPOND_IO_TOKEN,
   RESPOND_IO_CHANNEL_ID: !!RESPOND_IO_CHANNEL_ID,
@@ -36,7 +35,7 @@ app.get('/', (req, res) => {
   res.status(200).send('Bridge is running');
 });
 
-// (اختياري) test endpoints
+// (اختياري) endpoints للتجربة السريعة
 app.get('/message', (req, res) => res.status(200).send('OK'));
 app.get('/webhook/respond', (req, res) => res.status(200).send('OK'));
 
@@ -50,7 +49,7 @@ app.get('/webhook/gupshup', (req, res) => {
   res.status(200).send('Gupshup Webhook verified');
 });
 
-// ====== INCOMING: Gupshup ➝ Respond.io (حاليًا Text فقط) ======
+// ====== INCOMING: Gupshup ➝ Respond.io (Text + Media) ======
 app.post('/webhook/gupshup', async (req, res) => {
   console.log('📩 Incoming from Gupshup:', JSON.stringify(req.body));
 
@@ -65,14 +64,51 @@ app.post('/webhook/gupshup', async (req, res) => {
     const phoneRaw = incoming.payload.sender.phone;
     const phoneE164 = phoneRaw.startsWith('+') ? phoneRaw : `+${phoneRaw}`;
 
-    // حالياً بنحاول نجيب نص فقط
-    const text =
-      incoming.payload.payload?.text ||
-      incoming.payload.text ||
-      '[Non-text message]';
-
     const messageId = incoming.payload.id || String(Date.now());
     const timestamp = incoming.timestamp || Date.now();
+
+    const msgType = incoming.payload.type; // text/image/audio/video/file...
+    const msgPayload = incoming.payload.payload || {};
+
+    let respondMessage;
+
+    if (msgType === 'text') {
+      const text = msgPayload.text || incoming.payload.text || '';
+      respondMessage = { type: 'text', text: text || '[Empty text]' };
+    } else if (msgType === 'image') {
+      respondMessage = {
+        type: 'image',
+        url: msgPayload.url || '',
+        caption: msgPayload.caption || '',
+      };
+    } else if (msgType === 'audio') {
+      respondMessage = { type: 'audio', url: msgPayload.url || '' };
+    } else if (msgType === 'video') {
+      respondMessage = {
+        type: 'video',
+        url: msgPayload.url || '',
+        caption: msgPayload.caption || '',
+      };
+    } else if (msgType === 'file' || msgType === 'document') {
+      respondMessage = {
+        type: 'file',
+        url: msgPayload.url || '',
+        filename: msgPayload.filename || 'file',
+      };
+    } else {
+      respondMessage = {
+        type: 'text',
+        text: `[Non-text message: ${msgType}]`,
+      };
+    }
+
+    // لو ميديا بس مفيش URL واضح
+    if (respondMessage.type !== 'text' && !respondMessage.url) {
+      respondMessage = {
+        type: 'text',
+        text: `[${msgType}] received but no media url from Gupshup.`,
+      };
+    }
 
     const respondPayload = {
       channelId: RESPOND_IO_CHANNEL_ID,
@@ -82,10 +118,7 @@ app.post('/webhook/gupshup', async (req, res) => {
           type: 'message',
           mId: messageId,
           timestamp: timestamp,
-          message: {
-            type: 'text',
-            text: text,
-          },
+          message: respondMessage,
         },
       ],
       contact: {
@@ -103,7 +136,7 @@ app.post('/webhook/gupshup', async (req, res) => {
       },
     });
 
-    console.log('✅ Forwarded to Respond.io');
+    console.log('✅ Forwarded to Respond.io:', respondMessage.type);
     res.status(200).send('Forwarded to Respond.io');
   } catch (error) {
     console.error('❌ Error sending to Respond.io:', error.response?.data || error.message);
@@ -118,13 +151,11 @@ async function handleRespondOutgoing(req, res) {
   try {
     const { contactId, message } = req.body;
 
-    // 1) تحقق من وجود message
     if (!message || !message.type) {
       console.log('⚠️ Missing message or type');
       return res.status(200).send('Ignored');
     }
 
-    // 2) ابني رسالة Gupshup حسب النوع
     let gupshupMsg = null;
 
     if (message.type === 'text' && message.text) {
@@ -155,7 +186,6 @@ async function handleRespondOutgoing(req, res) {
       return res.status(200).send('Ignored');
     }
 
-    // 3) جهّز البيانات للإرسال
     const destination = String(contactId || '').replace(/^\+/, '');
     if (!destination) {
       console.log('⚠️ Missing contactId');
@@ -173,7 +203,6 @@ async function handleRespondOutgoing(req, res) {
 
     console.log('➡️ Sending to Gupshup:', { to: destination, type: gupshupMsg.type });
 
-    // 4) ابعت إلى Gupshup
     const response = await axios.post(gupshupUrl, params, {
       headers: {
         apikey: GUPSHUP_API_KEY,
@@ -190,12 +219,12 @@ async function handleRespondOutgoing(req, res) {
       error.response?.status,
       error.response?.data || error.message
     );
-    // حتى لو فشل، رجّع 200 عشان Respond.io ما يعملش retry مزعج
+    // رجّع 200 عشان Respond.io ما يعملش retries مزعجة
     res.status(200).json({ mId: String(Date.now()), status: 'accepted_with_error' });
   }
 }
 
-// نفس الهاندلر على المسارين
+// نفس الهاندلر على المسارين دول
 app.post('/message', handleRespondOutgoing);
 app.post('/webhook/respond', handleRespondOutgoing);
 
