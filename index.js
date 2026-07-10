@@ -107,7 +107,7 @@ app.post('/webhook/gupshup', async (req, res) => {
       },
     };
 
-    await axios.post('https://app.respond.io/custom/channel/webhook/', respondPayload, {
+    await axios.post('https://webhook.respond.io/custom/channel/webhook/', respondPayload, {
       headers: {
         Authorization: `Bearer ${RESPOND_IO_TOKEN}`,
         'Content-Type': 'application/json',
