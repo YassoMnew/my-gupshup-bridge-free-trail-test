@@ -118,6 +118,7 @@ app.post('/webhook/gupshup', async (req, res) => {
     if (incoming.type === 'message_reaction' || incoming.payload?.type === 'reaction') {
       const reaction = incoming.payload?.reaction || incoming.payload;
       const emoji = reaction?.emoji || '❤️';
+      const reactionToMessageId = incoming.payload?.reaction?.message_id || incoming.payload?.reaction?.messageId || null;
       const phoneRaw = incoming.payload?.sender?.phone || incoming.payload?.phone;
       
       if (!phoneRaw) {
@@ -138,8 +139,11 @@ app.post('/webhook/gupshup', async (req, res) => {
             mId: messageId,
             timestamp: timestamp,
             message: {
-              type: 'text',
-              text: `👤 User reacted with ${emoji}`,
+              type: 'reaction',
+              reaction: {
+                emoji: emoji,
+                messageId: reactionToMessageId || String(Date.now()),
+              }
             },
           },
         ],
